@@ -6,7 +6,7 @@ a = Analysis(
     ['main.py'],
     pathex=['.'],
     binaries=[],
-    datas=[('icon.ico', '.'), ('restaurant_system', 'restaurant_system')],
+    datas=[('icon.ico', '.')],
     hiddenimports=[
         'PyQt6.QtMultimedia',
         'PyQt6.QtPrintSupport',
@@ -14,8 +14,12 @@ a = Analysis(
         'PyQt6.QtGui',
         'PyQt6.QtWidgets',
         'PyQt6.QtMultimediaWidgets',
+        'restaurant_system',
         'restaurant_system.app',
-        'restaurant_system.db'
+        'restaurant_system.db',
+        'restaurant_system.db_config',
+        'restaurant_system.db_setup',
+        'restaurant_system.crypto',
     ],
     hookspath=[],
     hooksconfig={},

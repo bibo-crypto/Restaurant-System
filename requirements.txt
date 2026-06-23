@@ -1,2 +1,8 @@
 PyQt6>=6.0
 
+# اختياري: مطلوب فقط لو اخترت MySQL/MariaDB كقاعدة بيانات مركزية
+mysql-connector-python>=8.0
+
+# اختياري: لتشفير كلمة مرور MySQL في db_config.json (موصى به وليس إلزامياً)
+cryptography>=41.0
+

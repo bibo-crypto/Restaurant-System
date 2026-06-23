@@ -3,7 +3,7 @@
 Python + PyQt6  |  عربي / English
 """
 
-import sys, time, copy, random, math, struct, base64
+import sys, time, copy, random, math, struct, base64, hashlib
 from datetime import datetime, timedelta
 from collections import defaultdict
 from PyQt6.QtWidgets import *
@@ -22,13 +22,24 @@ try:
 except ImportError:  # pragma: no cover
     from db import load_state, save_state, DEFAULT_DB_PATH
 
+
+ADMIN_PASSWORD_HASH = "9484f3f9655b5a2ac41be97a295573f56267178d08804195277f259873e58376"
+
+
+def _admin_password_ok(value: str) -> bool:
+    candidate = hashlib.sha256(f"RestaurantManager::{value}".encode("utf-8")).hexdigest()
+    return candidate == ADMIN_PASSWORD_HASH
+
 # ══════════════════════════════════════════════════════════════
 #  TRANSLATIONS
 # ══════════════════════════════════════════════════════════════
 T = {
 'ar': dict(
   app_name='نظام إدارة المطعم', login='دخول', select_role='اختر دورك للدخول',
-  enter_name='اكتب اسمك (اختياري)', lang_btn='EN',
+  enter_name='اكتب اسمك (اختياري)', admin_password='كلمة مرور المدير',
+  admin_password_placeholder='اكتب كلمة مرور المدير',
+  admin_password_wrong='كلمة مرور المدير غير صحيحة',
+  lang_btn='EN',
   settings='الإعدادات',
   tables_mgmt='إدارة الطاولات',
   add_table='إضافة طاولة',
@@ -169,7 +180,10 @@ T = {
 ),
 'en': dict(
   app_name='Restaurant Manager', login='Enter', select_role='Select your role',
-  enter_name='Enter your name (optional)', lang_btn='AR',
+  enter_name='Enter your name (optional)', admin_password='Admin password',
+  admin_password_placeholder='Enter admin password',
+  admin_password_wrong='Incorrect admin password',
+  lang_btn='AR',
   settings='Settings',
   tables_mgmt='Tables Management',
   add_table='Add Table',
@@ -697,6 +711,13 @@ class LoginScreen(QWidget):
         vl.addWidget(self.name_in)
         vl.addSpacing(4)
 
+        self.pass_in = QLineEdit()
+        self.pass_in.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pass_in.setFixedHeight(44)
+        self.pass_in.setEchoMode(QLineEdit.EchoMode.Password)
+        vl.addWidget(self.pass_in)
+        self.pass_in.hide()
+
         grid_w = QWidget(); grid_w.setStyleSheet('background:transparent; border:none;')
         grid   = QGridLayout(grid_w); grid.setSpacing(10)
         for idx,(rid,ico2) in enumerate([('admin','👨‍💼'),('cashier','💳'),('waiter','🍽️'),('kitchen','👨‍🍳')]):
@@ -723,17 +744,28 @@ class LoginScreen(QWidget):
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft if rtl else Qt.LayoutDirection.LeftToRight)
         self.title_l.setText(t['app_name']); self.sub_l.setText(t['select_role'])
         self.name_in.setPlaceholderText(t['enter_name'])
+        self.pass_in.setPlaceholderText(t['admin_password_placeholder'])
         self.login_b.setText(f"  {t['login']}  →")
         self.lang_b.setText(t['lang_btn'])
         icons = dict(admin='👨‍💼', cashier='💳', waiter='🍽️', kitchen='👨‍🍳')
         for rid, b in self._rbtn.items():
             b.setText(f"{icons[rid]}\n{t['roles'][rid]}")
             self._style_rb(b, b.isChecked())
+        if self._sel == 'admin':
+            self.pass_in.show()
+        else:
+            self.pass_in.hide()
 
     def _pick(self, rid):
         self._sel = rid
         for r,b in self._rbtn.items():
             b.setChecked(r==rid); self._style_rb(b, r==rid)
+        if rid == 'admin':
+            self.pass_in.show()
+            self.pass_in.setFocus()
+        else:
+            self.pass_in.clear()
+            self.pass_in.hide()
 
     def _style_rb(self, b, sel):
         if sel:
@@ -744,6 +776,11 @@ class LoginScreen(QWidget):
     def _do(self):
         if not self._sel: return
         t = APP.t()
+        if self._sel == 'admin' and not _admin_password_ok(self.pass_in.text().strip()):
+            QMessageBox.warning(self, t['login'], t['admin_password_wrong'])
+            self.pass_in.selectAll()
+            self.pass_in.setFocus()
+            return
         name = self.name_in.text().strip() or t['roles'][self._sel]
         self.logged_in.emit(dict(role=self._sel, name=name))
 
@@ -2030,6 +2067,11 @@ class SettingsScreen(QWidget):
 
         self.save_b = btn('','amber',50,15); vl.addWidget(self.save_b)
         self.save_b.clicked.connect(self._save)
+
+        self.db_setup_b = btn('🗄️  إعداد قاعدة البيانات','gray',46,13)
+        self.db_setup_b.clicked.connect(self._open_db_setup)
+        vl.addWidget(self.db_setup_b)
+
         self.refresh()
 
     def refresh(self):
@@ -2039,6 +2081,7 @@ class SettingsScreen(QWidget):
 
         is_admin = bool(APP.user and APP.user.get('role') == 'admin')
         self.tables_card.setVisible(is_admin)
+        self.db_setup_b.setVisible(is_admin)
         if is_admin:
             self.tables_title.setText(f"🪑  {t['tables_mgmt']}")
             self.seats_spin.setPrefix(f"{t['seats_lbl']}: ")
@@ -2154,6 +2197,14 @@ class SettingsScreen(QWidget):
         persist_state()
         self._refresh_tables_combo()
         QMessageBox.information(self, APP.t()['tables_mgmt'], APP.t()['table_removed'])
+
+    def _open_db_setup(self):
+        if not (APP.user and APP.user.get('role') == 'admin'):
+            QMessageBox.warning(self, APP.t()['settings'], "هذه الصلاحية متاحة للمدير فقط.")
+            return
+        from .db_setup import DBSetupDialog
+        dlg = DBSetupDialog(self)
+        dlg.exec()
 
 # ══════════════════════════════════════════════════════════════
 #  REPORTS SCREEN
@@ -3258,6 +3309,16 @@ def run(argv=None) -> int:
     pal.setColor(QPalette.ColorRole.HighlightedText,  QColor('#000000'))
     app.setPalette(pal)
     app.setStyleSheet(STYLE)
+
+    # ── أول تشغيل: اعرض شاشة إعداد قاعدة البيانات إن لم تكن موجودة ──
+    from .db_config import get_config, save_config, _DEFAULTS
+    from .db_setup import DBSetupDialog
+    if not get_config().get("setup_completed", False):
+        dlg = DBSetupDialog()
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return 0
+        if not get_config().get("setup_completed", False):
+            save_config({**_DEFAULTS, "setup_completed": True})
 
     win = MainWindow()
     win.show()
