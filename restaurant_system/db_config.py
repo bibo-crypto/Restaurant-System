@@ -50,6 +50,8 @@ _DEFAULTS = {
     "db_type": "sqlite_local",   # "sqlite_local" | "sqlite_network" | "mysql"
     # نميز بين ملف موجود فعلاً وبين إعداد تم اختياره وحفظه من المستخدم
     "setup_completed": False,
+    # كلمة مرور المدير — لا قيمة افتراضية ثابتة؛ تُولَّد عشوائياً عند أول تشغيل
+    "admin_password_hash": "",
     # SQLite (محلي أو شبكة)
     "sqlite_path": "",           # فارغ = restaurant.sqlite في مجلد البرنامج
     # MySQL / MariaDB

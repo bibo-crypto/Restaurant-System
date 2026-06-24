@@ -3,7 +3,7 @@
 Python + PyQt6  |  عربي / English
 """
 
-import sys, time, copy, random, math, struct, base64, hashlib
+import sys, time, copy, random, math, struct, base64, hashlib, json
 from datetime import datetime, timedelta
 from collections import defaultdict
 from PyQt6.QtWidgets import *
@@ -23,12 +23,10 @@ except ImportError:  # pragma: no cover
     from db import load_state, save_state, DEFAULT_DB_PATH
 
 
-ADMIN_PASSWORD_HASH = "9484f3f9655b5a2ac41be97a295573f56267178d08804195277f259873e58376"
-
-
 def _admin_password_ok(value: str) -> bool:
-    candidate = hashlib.sha256(f"RestaurantManager::{value}".encode("utf-8")).hexdigest()
-    return candidate == ADMIN_PASSWORD_HASH
+    """يتحقق من كلمة مرور المدير المخزّنة بشكل آمن (مشفّرة، عشوائية لكل تثبيت)."""
+    from .admin_auth import verify_admin_password
+    return verify_admin_password(value)
 
 # ══════════════════════════════════════════════════════════════
 #  TRANSLATIONS
@@ -56,7 +54,8 @@ T = {
   switch_user='تبديل المستخدم',
   roles=dict(admin='مدير', cashier='كاشير', waiter='جرسون', kitchen='مطبخ'),
   nav=dict(tables='الطاولات', orders='الطلبات', menu='المنيو',
-           reports='التقارير', kitchen='المطبخ', settings='الإعدادات'),
+           reports='التقارير', kitchen='المطبخ', settings='الإعدادات',
+           import_export='استيراد / تصدير'),
   status=dict(free='فارغة', occupied='مشغولة', pending='انتظار',
               preparing='يتحضر', ready='جاهز', paid='مدفوع', cancelled='ملغي'),
   table='طاولة', seats='مقاعد', currency='ج.م',
@@ -200,7 +199,8 @@ T = {
   switch_user='Switch user',
   roles=dict(admin='Manager', cashier='Cashier', waiter='Waiter', kitchen='Kitchen'),
   nav=dict(tables='Tables', orders='Orders', menu='Menu',
-           reports='Reports', kitchen='Kitchen', settings='Settings'),
+           reports='Reports', kitchen='Kitchen', settings='Settings',
+           import_export='Import / Export'),
   status=dict(free='Free', occupied='Occupied', pending='Pending',
               preparing='Preparing', ready='Ready', paid='Paid', cancelled='Cancelled'),
   table='Table', seats='Seats', currency='EGP',
@@ -535,6 +535,38 @@ def _apply_state(d):
     if isinstance(d.get('sound'), dict):
         APP.sound.update(d['sound'])
 
+def _export_payload():
+    return dict(
+        schema='restaurant-system-backup',
+        version=1,
+        exportedAt=datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+        state=_state_to_dict(),
+    )
+
+def _extract_import_state(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid backup file")
+    state = payload.get('state') if isinstance(payload.get('state'), dict) else payload
+    if not isinstance(state, dict):
+        raise ValueError("Invalid backup file")
+    filtered = {}
+    for key in ('lang', 'tables', 'menu', 'orders', 'settings', 'stock', 'reservations', 'sound'):
+        if key not in state:
+            continue
+        value = state[key]
+        if key == 'lang':
+            if value in ('ar', 'en'):
+                filtered[key] = value
+        elif key in ('tables', 'menu', 'orders', 'reservations'):
+            if isinstance(value, list):
+                filtered[key] = value
+        elif key in ('settings', 'stock', 'sound'):
+            if isinstance(value, dict):
+                filtered[key] = value
+    if not filtered:
+        raise ValueError("No valid application data found")
+    return filtered
+
 def persist_state():
     try:
         save_state(_state_to_dict(), DEFAULT_DB_PATH)
@@ -838,7 +870,7 @@ class Sidebar(QWidget):
         base_items = [
             ('tables','🪑'), ('orders','📋'), ('menu','🍴'),
             ('warehouse','📦'), ('reservations','📅'),
-            ('reports','📊'), ('settings','⚙️')
+            ('reports','📊'), ('import_export','💾'), ('settings','⚙️')
         ]
         kitchen_items = [('kitchen','👨‍🍳')]
         if role == 'kitchen':
@@ -1955,6 +1987,180 @@ class MenuItemDialog(QDialog):
 # ══════════════════════════════════════════════════════════════
 #  SETTINGS SCREEN
 # ══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+#  IMPORT / EXPORT SCREEN
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+class ImportExportScreen(QWidget):
+    data_changed = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self.setStyleSheet('background:transparent;')
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(16)
+
+        self.title = lbl('', 'white', 20, True)
+        root.addWidget(self.title)
+
+        summary_card = card_widget('#111', '#1f2937', 14)
+        summary_lay = QVBoxLayout(summary_card)
+        summary_lay.setContentsMargins(18, 14, 18, 14)
+        summary_lay.setSpacing(10)
+        self.summary_title = lbl('', 'white', 15, True)
+        self.summary_note = lbl('', '#6b7280', 12)
+        summary_lay.addWidget(self.summary_title)
+        summary_lay.addWidget(self.summary_note)
+        summary_lay.addWidget(divider())
+        stats_w = QWidget(); stats_w.setStyleSheet('background:transparent;border:none;')
+        stats = QGridLayout(stats_w); stats.setContentsMargins(0, 4, 0, 0); stats.setSpacing(10)
+        self.stat_labels = {}
+        stat_defs = [('tables', '#0f172a'), ('menu', '#052e16'), ('orders', '#1c1500'),
+                     ('reservations', '#0c1a27'), ('stock', '#111827')]
+        for idx, (key, bg) in enumerate(stat_defs):
+            card = card_widget(bg, '#1f2937', 12)
+            vl = QVBoxLayout(card)
+            vl.setContentsMargins(14, 12, 14, 12)
+            vl.setSpacing(2)
+            self.stat_labels[key] = lbl('0', 'white', 20, True)
+            self.stat_labels[f'{key}_name'] = lbl('', '#9ca3af', 11)
+            vl.addWidget(self.stat_labels[f'{key}_name'])
+            vl.addWidget(self.stat_labels[key])
+            stats.addWidget(card, idx // 3, idx % 3)
+        summary_lay.addWidget(stats_w)
+        root.addWidget(summary_card)
+
+        export_card = card_widget('#052e16', '#166534', 14)
+        export_lay = QVBoxLayout(export_card)
+        export_lay.setContentsMargins(18, 14, 18, 14)
+        export_lay.setSpacing(8)
+        self.export_title = lbl('', 'white', 15, True)
+        self.export_note = lbl('', '#bbf7d0', 12)
+        self.export_path = lbl('', '#86efac', 11)
+        self.export_b = btn('', 'green', 46, 14)
+        self.export_b.clicked.connect(self._export_backup)
+        export_lay.addWidget(self.export_title)
+        export_lay.addWidget(self.export_note)
+        export_lay.addWidget(self.export_path)
+        export_lay.addWidget(self.export_b)
+        root.addWidget(export_card)
+
+        import_card = card_widget('#1c1500', '#854d0e', 14)
+        import_lay = QVBoxLayout(import_card)
+        import_lay.setContentsMargins(18, 14, 18, 14)
+        import_lay.setSpacing(8)
+        self.import_title = lbl('', 'white', 15, True)
+        self.import_note = lbl('', '#fde68a', 12)
+        self.import_b = btn('', 'orange', 46, 14)
+        self.import_b.clicked.connect(self._import_backup)
+        self.status_l = lbl('', '#9ca3af', 11)
+        import_lay.addWidget(self.import_title)
+        import_lay.addWidget(self.import_note)
+        import_lay.addWidget(self.import_b)
+        import_lay.addWidget(self.status_l)
+        root.addWidget(import_card)
+
+        root.addStretch(1)
+        self.refresh()
+
+    def refresh(self):
+        t = APP.t()
+        rtl = APP.lang == 'ar'
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft if rtl else Qt.LayoutDirection.LeftToRight)
+        self.title.setText(f"💾  {t['nav']['import_export']}")
+        self.summary_title.setText('Backup summary' if APP.lang == 'en' else 'ملخص النسخة الاحتياطية')
+        self.summary_note.setText('Current data that will be exported or replaced on import.' if APP.lang == 'en'
+                                  else 'البيانات الحالية التي سيتم تصديرها أو استبدالها عند الاستيراد.')
+        counts = dict(
+            tables=len(APP.tables),
+            menu=len(APP.menu),
+            orders=len(APP.orders),
+            reservations=len(APP.reservations),
+            stock=len(APP.stock),
+        )
+        labels = {
+            'tables': 'Tables' if APP.lang == 'en' else 'الطاولات',
+            'menu': 'Menu items' if APP.lang == 'en' else 'أصناف المنيو',
+            'orders': 'Orders' if APP.lang == 'en' else 'الطلبات',
+            'reservations': 'Reservations' if APP.lang == 'en' else 'الحجوزات',
+            'stock': 'Stock records' if APP.lang == 'en' else 'سجلات المخزون',
+        }
+        for key, val in counts.items():
+            self.stat_labels[key].setText(str(val))
+            self.stat_labels[f'{key}_name'].setText(labels[key])
+        self.export_title.setText('Export a full backup' if APP.lang == 'en' else 'تصدير نسخة احتياطية كاملة')
+        self.export_note.setText('Creates a JSON file with tables, menu, orders, settings, stock, reservations, and sound.'
+                                 if APP.lang == 'en'
+                                 else 'ينشئ ملف JSON يحتوي على الطاولات والمنيو والطلبات والإعدادات والمخزون والحجوزات والصوت.')
+        self.export_b.setText('  Export backup' if APP.lang == 'en' else '  تصدير النسخة')
+        self.export_path.setText('')
+        self.import_title.setText('Import a backup' if APP.lang == 'en' else 'استيراد نسخة احتياطية')
+        self.import_note.setText('Select a JSON backup to restore the app state.' if APP.lang == 'en'
+                                 else 'اختر ملف JSON لاسترجاع حالة التطبيق.')
+        self.import_b.setText('  Import backup' if APP.lang == 'en' else '  استيراد النسخة')
+        self.status_l.setText('')
+
+    def _export_backup(self):
+        t = APP.t()
+        default_name = f"restaurant-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            t['nav']['import_export'],
+            default_name,
+            "JSON Files (*.json);;All Files (*)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith('.json'):
+            path += '.json'
+        try:
+            with open(path, 'w', encoding='utf-8') as fh:
+                json.dump(_export_payload(), fh, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            QMessageBox.critical(self, t['nav']['import_export'], str(exc))
+            return
+        self.export_path.setText(path)
+        self.status_l.setText('Backup exported successfully.' if APP.lang == 'en' else 'تم تصدير النسخة بنجاح.')
+        QMessageBox.information(self, t['nav']['import_export'], self.status_l.text())
+
+    def _import_backup(self):
+        t = APP.t()
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            t['nav']['import_export'],
+            '',
+            "JSON Files (*.json);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as fh:
+                payload = json.load(fh)
+            state = _extract_import_state(payload)
+        except Exception as exc:
+            QMessageBox.critical(self, t['nav']['import_export'], str(exc))
+            return
+
+        confirm_text = (
+            f"This will replace the current data with the backup from:\n{path}\n\nContinue?"
+            if APP.lang == 'en'
+            else f"سيتم استبدال البيانات الحالية بالنسخة الموجودة في:\n{path}\n\nهل تريد المتابعة؟"
+        )
+        if QMessageBox.question(self, t['nav']['import_export'], confirm_text) != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            _apply_state(state)
+            persist_state()
+        except Exception as exc:
+            QMessageBox.critical(self, t['nav']['import_export'], str(exc))
+            return
+
+        self.status_l.setText('Backup imported successfully.' if APP.lang == 'en' else 'تم استيراد النسخة بنجاح.')
+        self.data_changed.emit()
+        QMessageBox.information(self, t['nav']['import_export'], self.status_l.text())
+
 class SettingsScreen(QWidget):
     def __init__(self):
         super().__init__()
@@ -2072,6 +2278,10 @@ class SettingsScreen(QWidget):
         self.db_setup_b.clicked.connect(self._open_db_setup)
         vl.addWidget(self.db_setup_b)
 
+        self.change_pw_b = btn('🔑  تغيير كلمة مرور المدير','gray',46,13)
+        self.change_pw_b.clicked.connect(self._open_change_password)
+        vl.addWidget(self.change_pw_b)
+
         self.refresh()
 
     def refresh(self):
@@ -2082,6 +2292,7 @@ class SettingsScreen(QWidget):
         is_admin = bool(APP.user and APP.user.get('role') == 'admin')
         self.tables_card.setVisible(is_admin)
         self.db_setup_b.setVisible(is_admin)
+        self.change_pw_b.setVisible(is_admin)
         if is_admin:
             self.tables_title.setText(f"🪑  {t['tables_mgmt']}")
             self.seats_spin.setPrefix(f"{t['seats_lbl']}: ")
@@ -2205,6 +2416,50 @@ class SettingsScreen(QWidget):
         from .db_setup import DBSetupDialog
         dlg = DBSetupDialog(self)
         dlg.exec()
+
+    def _open_change_password(self):
+        if not (APP.user and APP.user.get('role') == 'admin'):
+            QMessageBox.warning(self, APP.t()['settings'], "هذه الصلاحية متاحة للمدير فقط.")
+            return
+        from .admin_auth import verify_admin_password, set_admin_password
+
+        old_pw, ok = QInputDialog.getText(
+            self, "تغيير كلمة مرور المدير", "كلمة المرور الحالية:",
+            QLineEdit.EchoMode.Password
+        )
+        if not ok:
+            return
+        if not verify_admin_password(old_pw.strip()):
+            QMessageBox.warning(self, "خطأ", "كلمة المرور الحالية غير صحيحة.")
+            return
+
+        new_pw, ok = QInputDialog.getText(
+            self, "تغيير كلمة مرور المدير", "كلمة المرور الجديدة (6 أحرف على الأقل):",
+            QLineEdit.EchoMode.Password
+        )
+        if not ok:
+            return
+        new_pw = new_pw.strip()
+        if len(new_pw) < 6:
+            QMessageBox.warning(self, "خطأ", "كلمة المرور الجديدة قصيرة جداً (6 أحرف على الأقل).")
+            return
+
+        confirm_pw, ok = QInputDialog.getText(
+            self, "تغيير كلمة مرور المدير", "تأكيد كلمة المرور الجديدة:",
+            QLineEdit.EchoMode.Password
+        )
+        if not ok:
+            return
+        if confirm_pw.strip() != new_pw:
+            QMessageBox.warning(self, "خطأ", "كلمة المرور الجديدة وتأكيدها غير متطابقين.")
+            return
+
+        set_admin_password(new_pw)
+        QMessageBox.information(
+            self, "تم",
+            "تم تغيير كلمة مرور المدير بنجاح.\n"
+            "يمكنك الآن حذف ملف RestaurantManager_ADMIN_PASSWORD.txt من سطح المكتب إن وُجد."
+        )
 
 # ══════════════════════════════════════════════════════════════
 #  REPORTS SCREEN
@@ -3198,10 +3453,12 @@ class MainWindow(QMainWindow):
         self.orders_sc    = OrdersScreen(); self.orders_sc.open_order.connect(self._open_table)
         self.warehouse_sc    = WarehouseScreen()
         self.reservations_sc = ReservationsScreen()
+        self.import_export_sc = ImportExportScreen()
+        self.import_export_sc.data_changed.connect(self._after_data_changed)
 
         for sc in [self.login_sc,self.tables_sc,self.order_sc,self.kitchen_sc,
                    self.menu_sc,self.reports_sc,self.settings_sc,self.orders_sc,
-                   self.warehouse_sc, self.reservations_sc]:
+                   self.warehouse_sc, self.reservations_sc, self.import_export_sc]:
             self.stack.addWidget(sc)
 
         # Toast
@@ -3235,7 +3492,7 @@ class MainWindow(QMainWindow):
         self.sidebar.set_active(sid)
         SCREENS = dict(tables=self.tables_sc, orders=self.orders_sc, kitchen=self.kitchen_sc,
                        menu=self.menu_sc, reports=self.reports_sc, settings=self.settings_sc, order=self.order_sc,
-                       warehouse=self.warehouse_sc,
+                       warehouse=self.warehouse_sc, import_export=self.import_export_sc,
                        reservations=self.reservations_sc)
         sc = SCREENS.get(sid)
         if sc:
@@ -3266,10 +3523,22 @@ class MainWindow(QMainWindow):
             self.switch_user_b.setToolTip(APP.t().get('switch_user', 'Switch user'))
         self.sidebar.refresh()
         cur = self._screen
-        for sc in [self.tables_sc,self.orders_sc,self.kitchen_sc,self.menu_sc,self.reports_sc,self.settings_sc,self.warehouse_sc,self.reservations_sc]:
+        for sc in [self.tables_sc,self.orders_sc,self.kitchen_sc,self.menu_sc,self.reports_sc,self.settings_sc,self.warehouse_sc,self.reservations_sc,self.import_export_sc]:
             if hasattr(sc,'refresh'): sc.refresh()
         if cur == 'order' and self.order_sc.table:
             self.order_sc._rebuild_ui()
+
+    def _after_data_changed(self):
+        self.top_app.setText(APP.t()['app_name'])
+        if APP.user:
+            self.top_user.setText(f"{APP.t()['welcome']}, {APP.user['name']}  •  {APP.t()['roles'][APP.user['role']]}")
+            self.switch_user_b.setToolTip(APP.t().get('switch_user', 'Switch user'))
+        self.sidebar.build_items(APP.user['role'] if APP.user else 'admin')
+        for sc in [self.tables_sc,self.orders_sc,self.kitchen_sc,self.menu_sc,self.reports_sc,self.settings_sc,self.warehouse_sc,self.reservations_sc,self.import_export_sc]:
+            if hasattr(sc,'refresh'):
+                sc.refresh()
+        if self._screen == 'order':
+            self._switch_screen('tables')
 
     def _do_logout(self):
         APP.user = None
@@ -3280,8 +3549,8 @@ class MainWindow(QMainWindow):
         self._show_login()
 
     def _auto_refresh(self):
-        if APP.user and self._screen in ('tables','kitchen','orders','warehouse','reservations'):
-            sc = dict(tables=self.tables_sc,kitchen=self.kitchen_sc,orders=self.orders_sc,warehouse=self.warehouse_sc,reservations=self.reservations_sc).get(self._screen)
+        if APP.user and self._screen in ('tables','kitchen','orders','warehouse','reservations','import_export'):
+            sc = dict(tables=self.tables_sc,kitchen=self.kitchen_sc,orders=self.orders_sc,warehouse=self.warehouse_sc,reservations=self.reservations_sc,import_export=self.import_export_sc).get(self._screen)
             if sc and hasattr(sc,'refresh'): sc.refresh()
 
     def resizeEvent(self, e):
@@ -3313,12 +3582,17 @@ def run(argv=None) -> int:
     # ── أول تشغيل: اعرض شاشة إعداد قاعدة البيانات إن لم تكن موجودة ──
     from .db_config import get_config, save_config, _DEFAULTS
     from .db_setup import DBSetupDialog
+    from .admin_auth import ensure_admin_password_exists
     if not get_config().get("setup_completed", False):
         dlg = DBSetupDialog()
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return 0
+        dlg.exec()
+        # نضمن وجود setup_completed=True دائماً بعد إغلاق الشاشة (حتى لو
+        # المستخدم ألغى أو قفل النافذة بدون ضغط "حفظ") لتفادي إعادة عرضها كل تشغيل.
         if not get_config().get("setup_completed", False):
             save_config({**_DEFAULTS, "setup_completed": True})
+
+    # يضمن وجود كلمة مرور مدير عشوائية وآمنة (لا توجد قيمة ثابتة في الكود).
+    ensure_admin_password_exists()
 
     win = MainWindow()
     win.show()

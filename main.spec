@@ -20,6 +20,7 @@ a = Analysis(
         'restaurant_system.db_config',
         'restaurant_system.db_setup',
         'restaurant_system.crypto',
+        'restaurant_system.admin_auth',
     ],
     hookspath=[],
     hooksconfig={},
