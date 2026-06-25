@@ -3,7 +3,7 @@
 Python + PyQt6  |  عربي / English
 """
 
-import sys, time, copy, random, math, struct, base64, hashlib, json
+import sys, time, copy, random, math, struct, base64, hashlib, json, os
 from datetime import datetime, timedelta
 from collections import defaultdict
 from PyQt6.QtWidgets import *
@@ -19,8 +19,10 @@ except ImportError:
         def play(self): pass
 try:
     from .db import load_state, save_state, DEFAULT_DB_PATH
+    from .db_config import get_config
 except ImportError:  # pragma: no cover
     from db import load_state, save_state, DEFAULT_DB_PATH
+    from db_config import get_config
 
 
 def _admin_password_ok(value: str) -> bool:
@@ -735,6 +737,8 @@ class LoginScreen(QWidget):
         self.title_l = lbl('', '#fff', 22, True, Qt.AlignmentFlag.AlignCenter)
         self.sub_l   = lbl('', '#6b7280', 13, False, Qt.AlignmentFlag.AlignCenter)
         vl.addWidget(self.title_l); vl.addWidget(self.sub_l)
+        self.sync_note = lbl('', '#f59e0b', 11, True, Qt.AlignmentFlag.AlignCenter)
+        vl.addWidget(self.sync_note)
         vl.addSpacing(4)
 
         self.name_in = QLineEdit()
@@ -763,6 +767,17 @@ class LoginScreen(QWidget):
         self.login_b.clicked.connect(self._do)
         vl.addWidget(self.login_b)
 
+        self.reset_b = btn('♻️  Reset Admin Password', 'rose', 42, 12)
+        self.reset_b.clicked.connect(self._reset_admin_password)
+        vl.addWidget(self.reset_b)
+
+        self.open_file_b = btn('📄  Open Password File', 'gray', 38, 12)
+        self.open_file_b.clicked.connect(self._open_password_file)
+        vl.addWidget(self.open_file_b)
+
+        self.file_status_l = lbl('', '#f59e0b', 11, True, Qt.AlignmentFlag.AlignCenter)
+        vl.addWidget(self.file_status_l)
+
         self.lang_b = QPushButton()
         self.lang_b.setStyleSheet('background:transparent; border:none; color:#4b5563; font-size:12px; font-weight:bold;')
         self.lang_b.clicked.connect(self._toggle_lang)
@@ -775,18 +790,36 @@ class LoginScreen(QWidget):
         t = APP.t(); rtl = APP.lang=='ar'
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft if rtl else Qt.LayoutDirection.LeftToRight)
         self.title_l.setText(t['app_name']); self.sub_l.setText(t['select_role'])
+        if get_config().get("db_type", "sqlite_local") == "sqlite_local":
+            self.sync_note.setText(
+                "⚠ هذا الجهاز يستخدم قاعدة محلية. الأجهزة الأخرى لن ترى الطلبات."
+                if APP.lang == 'ar'
+                else "⚠ This device uses a local database. Other devices will not see orders."
+            )
+            self.sync_note.show()
+        else:
+            self.sync_note.hide()
         self.name_in.setPlaceholderText(t['enter_name'])
         self.pass_in.setPlaceholderText(t['admin_password_placeholder'])
         self.login_b.setText(f"  {t['login']}  →")
+        self.reset_b.setText('♻️  إعادة تعيين كلمة مرور المدير' if APP.lang == 'ar' else '♻️  Reset Admin Password')
+        self.open_file_b.setText('📄  فتح ملف كلمة المرور' if APP.lang == 'ar' else '📄  Open Password File')
         self.lang_b.setText(t['lang_btn'])
         icons = dict(admin='👨‍💼', cashier='💳', waiter='🍽️', kitchen='👨‍🍳')
         for rid, b in self._rbtn.items():
             b.setText(f"{icons[rid]}\n{t['roles'][rid]}")
             self._style_rb(b, b.isChecked())
+        self._refresh_password_file_status()
         if self._sel == 'admin':
             self.pass_in.show()
+            self.reset_b.show()
+            self.open_file_b.show()
+            self.file_status_l.show()
         else:
             self.pass_in.hide()
+            self.reset_b.hide()
+            self.open_file_b.hide()
+            self.file_status_l.hide()
 
     def _pick(self, rid):
         self._sel = rid
@@ -795,9 +828,11 @@ class LoginScreen(QWidget):
         if rid == 'admin':
             self.pass_in.show()
             self.pass_in.setFocus()
+            self.reset_b.show()
         else:
             self.pass_in.clear()
             self.pass_in.hide()
+            self.reset_b.hide()
 
     def _style_rb(self, b, sel):
         if sel:
@@ -819,6 +854,55 @@ class LoginScreen(QWidget):
     def _toggle_lang(self):
         APP.lang = 'en' if APP.lang=='ar' else 'ar'
         self.refresh()
+
+    def _refresh_password_file_status(self):
+        from .admin_auth import get_admin_password_file_path
+        path = get_admin_password_file_path()
+        if path.exists():
+            self.file_status_l.setText('✓ الملف موجود' if APP.lang == 'ar' else f'✓ {path.name}')
+            self.file_status_l.setStyleSheet('color:#22c55e; background:transparent; border:none; font-size:11px; font-weight:bold;')
+        else:
+            self.file_status_l.setText('⚠ ملف كلمة المرور غير موجود. استخدم Reset.' if APP.lang == 'ar' else '⚠ Password file missing. Use Reset.')
+            self.file_status_l.setStyleSheet('color:#f59e0b; background:transparent; border:none; font-size:11px; font-weight:bold;')
+
+    def _open_password_file(self):
+        from .admin_auth import get_admin_password_file_path
+        path = get_admin_password_file_path()
+        target = path if path.exists() else path.parent
+        try:
+            os.startfile(str(target))
+        except Exception:
+            pass
+        if not path.exists():
+            QMessageBox.information(
+                self,
+                APP.t()['login'],
+                'تم فتح المجلد. إذا لم تجد الملف استخدم Reset.'
+                if APP.lang == 'ar'
+                else 'The folder was opened. If the file is missing, use Reset.'
+            )
+
+    def _reset_admin_password(self):
+        if self._sel != 'admin':
+            return
+        confirm = (
+            "هل تريد إنشاء كلمة مرور جديدة للمدير؟ سيتم إلغاء الكلمة الحالية نهائياً."
+            if APP.lang == 'ar'
+            else "Generate a new admin password? The current password will be invalidated immediately."
+        )
+        if QMessageBox.question(self, APP.t()['login'], confirm) != QMessageBox.StandardButton.Yes:
+            return
+        from .admin_auth import reset_admin_password
+        new_pw = reset_admin_password()
+        self.pass_in.setText(new_pw)
+        self.pass_in.selectAll()
+        self._refresh_password_file_status()
+        msg = (
+            f"تم إنشاء كلمة مرور جديدة وحفظها في ملف سطح المكتب.\n\n{new_pw}"
+            if APP.lang == 'ar'
+            else f"A new password was generated and written to the desktop file.\n\n{new_pw}"
+        )
+        QMessageBox.information(self, APP.t()['login'], msg)
 
 # ══════════════════════════════════════════════════════════════
 #  SIDEBAR
@@ -2282,6 +2366,10 @@ class SettingsScreen(QWidget):
         self.change_pw_b.clicked.connect(self._open_change_password)
         vl.addWidget(self.change_pw_b)
 
+        self.reset_pw_b = btn('♻️  Reset Admin Password','rose',46,13)
+        self.reset_pw_b.clicked.connect(self._reset_admin_password)
+        vl.addWidget(self.reset_pw_b)
+
         self.refresh()
 
     def refresh(self):
@@ -2293,6 +2381,7 @@ class SettingsScreen(QWidget):
         self.tables_card.setVisible(is_admin)
         self.db_setup_b.setVisible(is_admin)
         self.change_pw_b.setVisible(is_admin)
+        self.reset_pw_b.setVisible(is_admin)
         if is_admin:
             self.tables_title.setText(f"🪑  {t['tables_mgmt']}")
             self.seats_spin.setPrefix(f"{t['seats_lbl']}: ")
@@ -2460,6 +2549,29 @@ class SettingsScreen(QWidget):
             "تم تغيير كلمة مرور المدير بنجاح.\n"
             "يمكنك الآن حذف ملف RestaurantManager_ADMIN_PASSWORD.txt من سطح المكتب إن وُجد."
         )
+
+    def _reset_admin_password(self):
+        if not (APP.user and APP.user.get('role') == 'admin'):
+            QMessageBox.warning(self, APP.t()['settings'], "هذه الصلاحية متاحة للمدير فقط.")
+            return
+
+        confirm = (
+            "هل تريد إنشاء كلمة مرور جديدة للمدير؟ سيتم إلغاء الكلمة الحالية نهائياً."
+            if APP.lang == 'ar'
+            else "Generate a new admin password? The current password will be invalidated immediately."
+        )
+        if QMessageBox.question(self, "Reset Admin Password", confirm) != QMessageBox.StandardButton.Yes:
+            return
+
+        from .admin_auth import reset_admin_password
+        new_pw = reset_admin_password()
+        msg = (
+            f"تم إنشاء كلمة مرور جديدة وحفظها في ملف سطح المكتب.\n\n{new_pw}\n\n"
+            "احذف الملف القديم إذا أردت."
+            if APP.lang == 'ar'
+            else f"A new password was generated and written to the desktop file.\n\n{new_pw}\n\nKeep it safe."
+        )
+        QMessageBox.information(self, "Reset Admin Password", msg)
 
 # ══════════════════════════════════════════════════════════════
 #  REPORTS SCREEN
@@ -3467,7 +3579,7 @@ class MainWindow(QMainWindow):
 
         # Kitchen auto-refresh timer
         self._ktimer = QTimer(); self._ktimer.timeout.connect(self._auto_refresh)
-        self._ktimer.start(8000)
+        self._ktimer.start(2000)
 
         self._show_login()
 

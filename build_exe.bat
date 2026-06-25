@@ -91,8 +91,12 @@ if errorlevel 1 (
 echo.
 echo [6/7] Cleaning old build files...
 
+taskkill /f /im RestaurantManager.exe >nul 2>&1
+taskkill /f /im RestaurantManager_Setup.exe >nul 2>&1
+
 if exist "build" rd /s /q "build"
 if exist "dist" rd /s /q "dist"
+if exist "installer_output" rd /s /q "installer_output"
 if exist "RestaurantManager.exe" del /f /q "RestaurantManager.exe"
 if exist __pycache__ rmdir /s /q __pycache__
 if exist restaurant_system\__pycache__ rmdir /s /q restaurant_system\__pycache__

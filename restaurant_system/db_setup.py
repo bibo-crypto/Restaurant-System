@@ -37,6 +37,16 @@ class DBSetupDialog(QDialog):
         self.type_combo.currentIndexChanged.connect(self._on_type_changed)
         layout.addWidget(self.type_combo)
 
+        self.guide_box = QGroupBox("إرشادات الربط بين الأجهزة")
+        guide_layout = QVBoxLayout()
+        self.guide_lbl = QLabel()
+        self.guide_lbl.setWordWrap(True)
+        self.guide_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self.guide_lbl.setStyleSheet("color:#d1d5db;")
+        guide_layout.addWidget(self.guide_lbl)
+        self.guide_box.setLayout(guide_layout)
+        layout.addWidget(self.guide_box)
+
         # ── إعدادات SQLite الشبكي ──
         self.sqlite_box = QGroupBox("مسار ملف قاعدة البيانات على الشبكة")
         sqlite_form = QHBoxLayout()
@@ -80,11 +90,37 @@ class DBSetupDialog(QDialog):
         layout.addLayout(btn_row)
 
         self._on_type_changed()
+        self._refresh_guide()
 
     def _on_type_changed(self):
         db_type = self.type_combo.currentData()
         self.sqlite_box.setVisible(db_type == "sqlite_network")
         self.mysql_box.setVisible(db_type == "mysql")
+        self._refresh_guide()
+
+    def _refresh_guide(self):
+        db_type = self.type_combo.currentData()
+        if db_type == "sqlite_local":
+            self.guide_lbl.setText(
+                "<b>مهم:</b> هذا الوضع مناسب لجهاز واحد فقط.<br>"
+                "لو عندك جهاز كاشير وجهاز مطبخ فلن يشاهدا نفس الطلبات هنا.<br><br>"
+                "<b>للأجهزة المتعددة:</b> اختر <b>SQLite على الشبكة</b> أو <b>MySQL</b>."
+            )
+        elif db_type == "sqlite_network":
+            self.guide_lbl.setText(
+                "<b>خطوات الربط:</b><br>"
+                "1) ضع ملف قاعدة البيانات على مجلد شبكة مشترك يمكن للجهازين الوصول إليه.<br>"
+                "2) اكتب نفس المسار على كل جهاز مثل: <code>\\\\SERVER\\Share\\restaurant.sqlite</code>.<br>"
+                "3) اختبر الاتصال ثم احفظ الإعدادات على جميع الأجهزة."
+            )
+        else:
+            self.guide_lbl.setText(
+                "<b>خطوات الربط:</b><br>"
+                "1) جهّز MySQL/MariaDB على جهاز الخادم.<br>"
+                "2) أنشئ قاعدة بيانات ومستخدم بصلاحيات كاملة عليها.<br>"
+                "3) أدخل Host وPort واسم القاعدة واسم المستخدم وكلمة المرور.<br>"
+                "4) اختبر الاتصال ثم احفظ، واستخدم نفس البيانات على باقي الأجهزة."
+            )
 
     def _browse_sqlite_path(self):
         path, _ = QFileDialog.getSaveFileName(

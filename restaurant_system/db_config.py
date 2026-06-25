@@ -52,6 +52,7 @@ _DEFAULTS = {
     "setup_completed": False,
     # كلمة مرور المدير — لا قيمة افتراضية ثابتة؛ تُولَّد عشوائياً عند أول تشغيل
     "admin_password_hash": "",
+    "admin_password_recovery": "",
     # SQLite (محلي أو شبكة)
     "sqlite_path": "",           # فارغ = restaurant.sqlite في مجلد البرنامج
     # MySQL / MariaDB
@@ -105,7 +106,14 @@ def load_config() -> dict:
 def save_config(data: dict):
     """يحفظ الإعدادات مع تشفير كلمة مرور MySQL إن وُجدت أداة تشفير."""
     global _config, _loaded
-    _config = {**_DEFAULTS, **data}
+    if _loaded:
+        current = dict(_config)
+    else:
+        try:
+            current = load_config()
+        except Exception:
+            current = dict(_DEFAULTS)
+    _config = {**_DEFAULTS, **current, **data}
     _loaded = True
     p = _config_path()
     p.parent.mkdir(parents=True, exist_ok=True)
