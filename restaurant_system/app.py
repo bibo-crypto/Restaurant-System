@@ -3579,7 +3579,7 @@ class MainWindow(QMainWindow):
 
         # Kitchen auto-refresh timer
         self._ktimer = QTimer(); self._ktimer.timeout.connect(self._auto_refresh)
-        self._ktimer.start(2000)
+        self._ktimer.start(4000)
 
         self._show_login()
 
@@ -3662,6 +3662,15 @@ class MainWindow(QMainWindow):
 
     def _auto_refresh(self):
         if APP.user and self._screen in ('tables','kitchen','orders','warehouse','reservations','import_export'):
+            # نقرأ فعلياً من قاعدة البيانات (محلية أو على الشبكة) قبل تحديث
+            # الشاشة، وإلا ستظل الشاشة تعرض نفس البيانات القديمة في الذاكرة
+            # ولن يظهر أي تحديث حصل من جهاز آخر متصل بنفس قاعدة البيانات.
+            try:
+                fresh = load_state(DEFAULT_DB_PATH)
+                if fresh:
+                    _apply_state(fresh)
+            except Exception:
+                pass  # تجاهل أخطاء الشبكة المؤقتة؛ ستُحاول القراءة تاني في الدورة التالية
             sc = dict(tables=self.tables_sc,kitchen=self.kitchen_sc,orders=self.orders_sc,warehouse=self.warehouse_sc,reservations=self.reservations_sc,import_export=self.import_export_sc).get(self._screen)
             if sc and hasattr(sc,'refresh'): sc.refresh()
 
