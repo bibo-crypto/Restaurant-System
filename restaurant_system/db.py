@@ -39,14 +39,41 @@ def _legacy_db_paths() -> list[Path]:
     return paths
 
 
+def _write_db_path_file(path: Path) -> None:
+    """يكتب مسار ملف قاعدة البيانات في ملف نصي على سطح المكتب — لتسهيل
+    نقل المسار لجهاز آخر عند ربط الأجهزة عبر الشبكة. يُكتب مرة واحدة فقط
+    عند إنشاء قاعدة البيانات لأول مرة على هذا الجهاز."""
+    try:
+        from .admin_auth import _desktop_dir
+        desktop = _desktop_dir()
+        info_path = desktop / "RestaurantManager_DB_PATH.txt"
+        with open(info_path, "w", encoding="utf-8") as f:
+            f.write("Restaurant Manager — مسار قاعدة البيانات\n")
+            f.write("=" * 45 + "\n")
+            f.write(f"{path}\n")
+            f.write("=" * 45 + "\n")
+            f.write(
+                "لربط جهاز آخر بنفس قاعدة البيانات هذه عبر الشبكة:\n"
+                "1) شارك المجلد الذي يحتوي هذا الملف بصلاحية Read/Write.\n"
+                "2) على الجهاز الآخر، افتح شاشة \"إعداد قاعدة البيانات\"،\n"
+                "   اختر \"SQLite على الشبكة\"، واكتب المسار بصيغة:\n"
+                f"   \\\\اسم_هذا_الجهاز\\اسم_المجلد_المُشارك\\{path.name}\n"
+            )
+    except Exception:
+        pass  # عدم القدرة على الكتابة لسطح المكتب لا يجب أن يوقف البرنامج
+
+
 def _sqlite_connect(db_path: Path) -> sqlite3.Connection:
     path = _sqlite_path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    is_first_time = not path.is_file()
     # timeout أطول لأن أكتر من جهاز ممكن يكتب على نفس ملف الشبكة في نفس الوقت
     conn = sqlite3.connect(str(path), timeout=20)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, json TEXT NOT NULL)"
     )
+    if is_first_time:
+        _write_db_path_file(path)
     return conn
 
 

@@ -751,6 +751,7 @@ class LoginScreen(QWidget):
         self.pass_in.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.pass_in.setFixedHeight(44)
         self.pass_in.setEchoMode(QLineEdit.EchoMode.Password)
+        self.pass_in.returnPressed.connect(self._do)
         vl.addWidget(self.pass_in)
         self.pass_in.hide()
 
@@ -766,10 +767,6 @@ class LoginScreen(QWidget):
         self.login_b = btn('', 'amber', 50, 15)
         self.login_b.clicked.connect(self._do)
         vl.addWidget(self.login_b)
-
-        self.reset_b = btn('♻️  Reset Admin Password', 'rose', 42, 12)
-        self.reset_b.clicked.connect(self._reset_admin_password)
-        vl.addWidget(self.reset_b)
 
         self.open_file_b = btn('📄  Open Password File', 'gray', 38, 12)
         self.open_file_b.clicked.connect(self._open_password_file)
@@ -802,7 +799,6 @@ class LoginScreen(QWidget):
         self.name_in.setPlaceholderText(t['enter_name'])
         self.pass_in.setPlaceholderText(t['admin_password_placeholder'])
         self.login_b.setText(f"  {t['login']}  →")
-        self.reset_b.setText('♻️  إعادة تعيين كلمة مرور المدير' if APP.lang == 'ar' else '♻️  Reset Admin Password')
         self.open_file_b.setText('📄  فتح ملف كلمة المرور' if APP.lang == 'ar' else '📄  Open Password File')
         self.lang_b.setText(t['lang_btn'])
         icons = dict(admin='👨‍💼', cashier='💳', waiter='🍽️', kitchen='👨‍🍳')
@@ -812,12 +808,10 @@ class LoginScreen(QWidget):
         self._refresh_password_file_status()
         if self._sel == 'admin':
             self.pass_in.show()
-            self.reset_b.show()
             self.open_file_b.show()
             self.file_status_l.show()
         else:
             self.pass_in.hide()
-            self.reset_b.hide()
             self.open_file_b.hide()
             self.file_status_l.hide()
 
@@ -828,11 +822,9 @@ class LoginScreen(QWidget):
         if rid == 'admin':
             self.pass_in.show()
             self.pass_in.setFocus()
-            self.reset_b.show()
         else:
             self.pass_in.clear()
             self.pass_in.hide()
-            self.reset_b.hide()
 
     def _style_rb(self, b, sel):
         if sel:
@@ -877,32 +869,10 @@ class LoginScreen(QWidget):
             QMessageBox.information(
                 self,
                 APP.t()['login'],
-                'تم فتح المجلد. إذا لم تجد الملف استخدم Reset.'
+                'تم فتح المجلد. إذا لم تجد الملف، يمكن لمدير مسجّل دخول مسبقاً إعادة تعيين كلمة المرور من شاشة الإعدادات.'
                 if APP.lang == 'ar'
-                else 'The folder was opened. If the file is missing, use Reset.'
+                else 'The folder was opened. If the file is missing, an already-logged-in admin can reset the password from Settings.'
             )
-
-    def _reset_admin_password(self):
-        if self._sel != 'admin':
-            return
-        confirm = (
-            "هل تريد إنشاء كلمة مرور جديدة للمدير؟ سيتم إلغاء الكلمة الحالية نهائياً."
-            if APP.lang == 'ar'
-            else "Generate a new admin password? The current password will be invalidated immediately."
-        )
-        if QMessageBox.question(self, APP.t()['login'], confirm) != QMessageBox.StandardButton.Yes:
-            return
-        from .admin_auth import reset_admin_password
-        new_pw = reset_admin_password()
-        self.pass_in.setText(new_pw)
-        self.pass_in.selectAll()
-        self._refresh_password_file_status()
-        msg = (
-            f"تم إنشاء كلمة مرور جديدة وحفظها في ملف سطح المكتب.\n\n{new_pw}"
-            if APP.lang == 'ar'
-            else f"A new password was generated and written to the desktop file.\n\n{new_pw}"
-        )
-        QMessageBox.information(self, APP.t()['login'], msg)
 
 # ══════════════════════════════════════════════════════════════
 #  SIDEBAR
