@@ -1350,7 +1350,8 @@ class OrderScreen(QWidget):
         if tb: tb['status']='occupied'
         low = deduct_stock(self._items)
         persist_state()
-        play_sound('new_order')
+        # لا نشغّل الصوت هنا على جهاز المُرسِل — يُشغَّل تلقائياً على جهاز
+        # المطبخ نفسه عند استقباله للطلب الجديد، عبر _auto_refresh في MainWindow.
         msg = APP.t()['sent_ok']
         if low:
             msg += '  |  ' + APP.t()['low_stock_warning'] + ': ' + ', '.join(low)
@@ -1897,8 +1898,8 @@ class KitchenScreen(QWidget):
     def _update(self, oid, status):
         o = APP.ord(oid)
         if o: o['status'] = status
-        if status == 'ready':
-            play_sound('order_ready')
+        # لا نشغّل الصوت هنا على جهاز المطبخ — يُشغَّل تلقائياً على جهاز
+        # الجرسون/الكاشير نفسه عند استقباله لتحديث "جاهز"، عبر _auto_refresh في MainWindow.
         persist_state()
         self.refresh()
 
@@ -3635,12 +3636,28 @@ class MainWindow(QMainWindow):
             # نقرأ فعلياً من قاعدة البيانات (محلية أو على الشبكة) قبل تحديث
             # الشاشة، وإلا ستظل الشاشة تعرض نفس البيانات القديمة في الذاكرة
             # ولن يظهر أي تحديث حصل من جهاز آخر متصل بنفس قاعدة البيانات.
+            old_orders_by_id = {o['id']: o for o in APP.orders}
             try:
                 fresh = load_state(DEFAULT_DB_PATH)
                 if fresh:
                     _apply_state(fresh)
             except Exception:
                 pass  # تجاهل أخطاء الشبكة المؤقتة؛ ستُحاول القراءة تاني في الدورة التالية
+
+            # نكشف التغييرات الجديدة القادمة من جهاز آخر، ونشغّل الصوت المناسب
+            # على هذا الجهاز نفسه فقط لو كانت شاشته الحالية هي الشاشة المعنية
+            # بهذا التحديث (المطبخ يسمع صوت الطلب الجديد، والجرسون/الكاشير
+            # يسمع صوت "الطلب جاهز" — وليس الجهاز المُرسِل نفسه).
+            for o in APP.orders:
+                old = old_orders_by_id.get(o['id'])
+                if old is None and self._screen == 'kitchen':
+                    # طلب جديد لم يكن موجوداً قبل هذا التحديث — وصل من جهاز آخر (الكاشير/الجرسون)
+                    play_sound('new_order')
+                elif (old is not None and old.get('status') != 'ready' and o.get('status') == 'ready'
+                        and self._screen == 'orders'):
+                    # طلب أصبح جاهزاً الآن — وصل تحديث من جهاز المطبخ
+                    play_sound('order_ready')
+
             sc = dict(tables=self.tables_sc,kitchen=self.kitchen_sc,orders=self.orders_sc,warehouse=self.warehouse_sc,reservations=self.reservations_sc,import_export=self.import_export_sc).get(self._screen)
             if sc and hasattr(sc,'refresh'): sc.refresh()
 
