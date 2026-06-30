@@ -2004,6 +2004,14 @@ class MenuScreen(QWidget):
             self.refresh()
 
 class MenuItemDialog(QDialog):
+    _INPUT_QSS = (
+        "QLineEdit {"
+        "  background:#1a1a1a; border:1.5px solid #374151; border-radius:10px;"
+        "  padding:8px 14px; color:#ffffff; font-size:14px;"
+        "}"
+        "QLineEdit:focus { border-color:#f59e0b; }"
+    )
+
     def __init__(self, item, parent=None):
         super().__init__(parent)
         t = APP.t(); rtl = APP.lang=='ar'
@@ -2013,9 +2021,14 @@ class MenuItemDialog(QDialog):
         vl = QVBoxLayout(self); vl.setContentsMargins(24,24,24,24); vl.setSpacing(12)
         vl.addWidget(lbl(t['edit_item'] if item else t['add_item'],'white',17,True))
         vl.addWidget(lbl(t['item_ar'],'#6b7280',11))
-        self.ar_in = QLineEdit(item['a'] if item else ''); vl.addWidget(self.ar_in)
+        self.ar_in = QLineEdit(item['a'] if item else '')
+        self.ar_in.setStyleSheet(self._INPUT_QSS); self.ar_in.setFixedHeight(40)
+        vl.addWidget(self.ar_in)
         vl.addWidget(lbl(t['item_en'],'#6b7280',11))
-        self.en_in = QLineEdit(item['e'] if item else ''); self.en_in.setLayoutDirection(Qt.LayoutDirection.LeftToRight); vl.addWidget(self.en_in)
+        self.en_in = QLineEdit(item['e'] if item else '')
+        self.en_in.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.en_in.setStyleSheet(self._INPUT_QSS); self.en_in.setFixedHeight(40)
+        vl.addWidget(self.en_in)
         vl.addWidget(lbl(t['category'],'#6b7280',11))
         self.cat_cb = QComboBox()
         for c in CATS: self.cat_cb.addItem(c if APP.lang=='ar' else t['cat_names'].get(c,c), c)
@@ -2024,7 +2037,10 @@ class MenuItemDialog(QDialog):
             self.cat_cb.setCurrentIndex(idx)
         vl.addWidget(self.cat_cb)
         vl.addWidget(lbl(f"{t['price']} ({t['currency']})  " if 'price' in t else f"{t['currency']}  ",'#6b7280',11))
-        self.price_in = QLineEdit(str(int(item['price'])) if item else ''); self.price_in.setLayoutDirection(Qt.LayoutDirection.LeftToRight); vl.addWidget(self.price_in)
+        self.price_in = QLineEdit(str(int(item['price'])) if item else '')
+        self.price_in.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.price_in.setStyleSheet(self._INPUT_QSS); self.price_in.setFixedHeight(40)
+        vl.addWidget(self.price_in)
         btns = QHBoxLayout(); btns.setSpacing(10)
         ok_b = btn(t['save'],'amber',42,13); ok_b.clicked.connect(self.accept)
         cancel_b = btn(t['cancel'],'gray',42,13); cancel_b.clicked.connect(self.reject)
